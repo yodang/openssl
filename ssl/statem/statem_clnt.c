@@ -2800,11 +2800,77 @@ int tls_process_cert_status_body(SSL *s, PACKET *pkt)
     return 1;
 }
 
+int tls_process_cert_status_v2_body(SSL *s, PACKET *pkt)
+{
+    size_t resplen;
+    unsigned int type;
+
+    if (!PACKET_get_1(pkt, &type)
+        || (type != TLSEXT_STATUSTYPE_ocsp && type != TLSEXT_STATUSTYPE_ocsp_multi)) {
+        SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_F_TLS_PROCESS_CERT_STATUS_V2_BODY,
+                 SSL_R_UNSUPPORTED_STATUS_TYPE);
+        return 0;
+    }
+    if (type == TLSEXT_STATUSTYPE_ocsp) {
+        if (!PACKET_get_net_3_len(pkt, &resplen)
+            || PACKET_remaining(pkt) != resplen) {
+            SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_F_TLS_PROCESS_CERT_STATUS_V2_BODY,
+                    SSL_R_LENGTH_MISMATCH);
+            return 0;
+        }
+    } else {
+        size_t list_len;
+        if (!PACKET_get_net_3_len(pkt, &list_len)
+            || PACKET_remaining(pkt) != list_len
+            || !PACKET_get_net_3_len(pkt, &resplen)) {
+            SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_F_TLS_PROCESS_CERT_STATUS_V2_BODY,
+                    SSL_R_LENGTH_MISMATCH);
+            return 0;
+        }
+    }
+
+    s->ext.ocsp.resp = OPENSSL_malloc(resplen);
+    if (s->ext.ocsp.resp == NULL) {
+        SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_TLS_PROCESS_CERT_STATUS_V2_BODY,
+                ERR_R_MALLOC_FAILURE);
+        return 0;
+    }
+    if (!PACKET_copy_bytes(pkt, s->ext.ocsp.resp, resplen)) {
+        SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_F_TLS_PROCESS_CERT_STATUS_V2_BODY,
+                SSL_R_LENGTH_MISMATCH);
+        return 0;
+    }
+    s->ext.ocsp.resp_len = resplen;
+    /* Forward to the end of the message */
+    if (PACKET_remaining(pkt) == 0) {
+        if(!PACKET_forward(pkt, PACKET_remaining(pkt))) {
+            SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_TLS_PROCESS_CERT_STATUS_V2_BODY,
+                ERR_R_INTERNAL_ERROR);
+            return 0;
+        }
+    }
+    return 1;
+}
 
 MSG_PROCESS_RETURN tls_process_cert_status(SSL *s, PACKET *pkt)
 {
-    if (!tls_process_cert_status_body(s, pkt)) {
-        /* SSLfatal() already called */
+    switch(s->ext.status_version)
+    {
+    case 1:
+        if (!tls_process_cert_status_body(s, pkt)) {
+            /* SSLfatal() already called */
+            return MSG_PROCESS_ERROR;
+        }
+        break;
+    case 2:
+        if (!tls_process_cert_status_v2_body(s, pkt)) {
+            /* SSLfatal() already called */
+            return MSG_PROCESS_ERROR;
+        }
+        break;
+    default:
+        SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_TLS_PROCESS_CERT_STATUS,
+                 ERR_R_INTERNAL_ERROR);
         return MSG_PROCESS_ERROR;
     }
 
