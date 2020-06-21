@@ -4200,17 +4200,17 @@ int tls_construct_cert_status_body(SSL *s, WPACKET *pkt)
     return 1;
 }
 
-int tls_construct_cert_status_body(SSL *s, WPACKET *pkt)
+int tls_construct_cert_status_v2_body(SSL *s, WPACKET *pkt)
 {
     if (!WPACKET_put_bytes_u8(pkt, s->ext.status_type)) {
-        SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_TLS_CONSTRUCT_CERT_STATUS_BODY,
+        SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_TLS_CONSTRUCT_CERT_STATUS_V2_BODY,
                  ERR_R_INTERNAL_ERROR);
         return 0;
     }
     switch (s->ext.status_type) {
     case TLSEXT_STATUSTYPE_ocsp:
         if (!WPACKET_sub_memcpy_u24(pkt, s->ext.ocsp.resp, s->ext.ocsp.resp_len)) {
-            SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_TLS_CONSTRUCT_CERT_STATUS_BODY,
+            SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_TLS_CONSTRUCT_CERT_STATUS_V2_BODY,
                     ERR_R_INTERNAL_ERROR);
             return 0;
         }
@@ -4220,14 +4220,14 @@ int tls_construct_cert_status_body(SSL *s, WPACKET *pkt)
         if (!WPACKET_start_sub_packet_u24(pkt)
             || !WPACKET_sub_memcpy_u24(pkt, s->ext.ocsp.resp, s->ext.ocsp.resp_len)
             || !WPACKET_close(pkt)) {
-            SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_TLS_CONSTRUCT_CERT_STATUS_BODY,
+            SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_TLS_CONSTRUCT_CERT_STATUS_V2_BODY,
                     ERR_R_INTERNAL_ERROR);
             return 0;
         }
         /* code */
         break;
     default:
-        SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_TLS_CONSTRUCT_CERT_STATUS_BODY,
+        SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_TLS_CONSTRUCT_CERT_STATUS_V2_BODY,
                  ERR_R_INTERNAL_ERROR);
         return 0;
     }
