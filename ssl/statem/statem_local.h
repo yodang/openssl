@@ -211,6 +211,8 @@ int tls_parse_ctos_sig_algs(SSL *s, PACKET *pkt, unsigned int context, X509 *x,
 #ifndef OPENSSL_NO_OCSP
 int tls_parse_ctos_status_request(SSL *s, PACKET *pkt, unsigned int context,
                                   X509 *x, size_t chainidx);
+int tls_parse_ctos_status_request_v2(SSL *s, PACKET *pkt, unsigned int context,
+                                  X509 *x, size_t chainidx);
 #endif
 #ifndef OPENSSL_NO_NEXTPROTONEG
 int tls_parse_ctos_npn(SSL *s, PACKET *pkt, unsigned int context, X509 *x,
@@ -262,6 +264,9 @@ EXT_RETURN tls_construct_stoc_session_ticket(SSL *s, WPACKET *pkt,
                                              size_t chainidx);
 #ifndef OPENSSL_NO_OCSP
 EXT_RETURN tls_construct_stoc_status_request(SSL *s, WPACKET *pkt,
+                                             unsigned int context, X509 *x,
+                                             size_t chainidx);
+EXT_RETURN tls_construct_stoc_status_request_v2(SSL *s, WPACKET *pkt,
                                              unsigned int context, X509 *x,
                                              size_t chainidx);
 #endif
@@ -332,6 +337,9 @@ EXT_RETURN tls_construct_ctos_sig_algs(SSL *s, WPACKET *pkt,
 EXT_RETURN tls_construct_ctos_status_request(SSL *s, WPACKET *pkt,
                                              unsigned int context, X509 *x,
                                              size_t chainidx);
+EXT_RETURN tls_construct_ctos_status_request_v2(SSL *s, WPACKET *pkt,
+                                             unsigned int context, X509 *x,
+                                             size_t chainidx);
 #endif
 #ifndef OPENSSL_NO_NEXTPROTONEG
 EXT_RETURN tls_construct_ctos_npn(SSL *s, WPACKET *pkt, unsigned int context,
@@ -386,6 +394,8 @@ int tls_parse_stoc_session_ticket(SSL *s, PACKET *pkt, unsigned int context,
                                   X509 *x, size_t chainidx);
 #ifndef OPENSSL_NO_OCSP
 int tls_parse_stoc_status_request(SSL *s, PACKET *pkt, unsigned int context,
+                                  X509 *x, size_t chainidx);
+int tls_parse_stoc_status_request_v2(SSL *s, PACKET *pkt, unsigned int context,
                                   X509 *x, size_t chainidx);
 #endif
 #ifndef OPENSSL_NO_CT

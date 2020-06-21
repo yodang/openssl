@@ -118,6 +118,9 @@ extern "C" {
 /* ExtensionType value from RFC7301 */
 # define TLSEXT_TYPE_application_layer_protocol_negotiation 16
 
+/* ExtensionType values from RFC6961 */
+# define TLSEXT_TYPE_status_request_v2 17
+
 /*
  * Extension type for Certificate Transparency
  * https://tools.ietf.org/html/rfc6962#section-3.3.1
@@ -162,6 +165,8 @@ extern "C" {
 # define TLSEXT_NAMETYPE_host_name 0
 /* status request value from RFC3546 */
 # define TLSEXT_STATUSTYPE_ocsp 1
+/* status request value from RFC6961 */
+# define TLSEXT_STATUSTYPE_ocsp_multi 2
 
 /* ECPointFormat values from RFC4492 */
 # define TLSEXT_ECPOINTFORMAT_first                      0

@@ -333,6 +333,94 @@ int tls_parse_ctos_sig_algs(SSL *s, PACKET *pkt, unsigned int context, X509 *x,
 }
 
 #ifndef OPENSSL_NO_OCSP
+int parse_ocsp_status_req(SSL* s, PACKET* pkt)
+{
+    PACKET responder_id_list, exts;
+
+    if (!PACKET_get_length_prefixed_2 (pkt, &responder_id_list)) {
+        SSLfatal(s, SSL_AD_DECODE_ERROR,
+                 SSL_F_TLS_PARSE_OCSP_STATUS_REQ, SSL_R_BAD_EXTENSION);
+        return 0;
+    }
+    /*
+     * We remove any OCSP_RESPIDs from a previous handshake
+     * to prevent unbounded memory growth - CVE-2016-6304
+     */
+    sk_OCSP_RESPID_pop_free(s->ext.ocsp.ids, OCSP_RESPID_free);
+    if (PACKET_remaining(&responder_id_list) > 0) {
+        s->ext.ocsp.ids = sk_OCSP_RESPID_new_null();
+        if (s->ext.ocsp.ids == NULL) {
+            SSLfatal(s, SSL_AD_INTERNAL_ERROR,
+                     SSL_F_TLS_PARSE_OCSP_STATUS_REQ, ERR_R_MALLOC_FAILURE);
+            return 0;
+        }
+    } else {
+        s->ext.ocsp.ids = NULL;
+    }
+
+    while (PACKET_remaining(&responder_id_list) > 0) {
+        OCSP_RESPID *id;
+        PACKET responder_id;
+        const unsigned char *id_data;
+
+        if (!PACKET_get_length_prefixed_2(&responder_id_list, &responder_id)
+                || PACKET_remaining(&responder_id) == 0) {
+            SSLfatal(s, SSL_AD_DECODE_ERROR,
+                     SSL_F_TLS_PARSE_OCSP_STATUS_REQ, SSL_R_BAD_EXTENSION);
+            return 0;
+        }
+
+        id_data = PACKET_data(&responder_id);
+        /* TODO(size_t): Convert d2i_* to size_t */
+        id = d2i_OCSP_RESPID(NULL, &id_data,
+                             (int)PACKET_remaining(&responder_id));
+        if (id == NULL) {
+            SSLfatal(s, SSL_AD_DECODE_ERROR,
+                     SSL_F_TLS_PARSE_OCSP_STATUS_REQ, SSL_R_BAD_EXTENSION);
+            return 0;
+        }
+
+        if (id_data != PACKET_end(&responder_id)) {
+            OCSP_RESPID_free(id);
+            SSLfatal(s, SSL_AD_DECODE_ERROR,
+                     SSL_F_TLS_PARSE_OCSP_STATUS_REQ, SSL_R_BAD_EXTENSION);
+
+            return 0;
+        }
+
+        if (!sk_OCSP_RESPID_push(s->ext.ocsp.ids, id)) {
+            OCSP_RESPID_free(id);
+            SSLfatal(s, SSL_AD_INTERNAL_ERROR,
+                     SSL_F_TLS_PARSE_OCSP_STATUS_REQ, ERR_R_INTERNAL_ERROR);
+
+            return 0;
+        }
+    }
+
+    /* Read in request_extensions */
+    if (!PACKET_as_length_prefixed_2(pkt, &exts)) {
+        SSLfatal(s, SSL_AD_DECODE_ERROR,
+                 SSL_F_TLS_PARSE_OCSP_STATUS_REQ, SSL_R_BAD_EXTENSION);
+        return 0;
+    }
+
+    if (PACKET_remaining(&exts) > 0) {
+        const unsigned char *ext_data = PACKET_data(&exts);
+
+        sk_X509_EXTENSION_pop_free(s->ext.ocsp.exts,
+                                   X509_EXTENSION_free);
+        s->ext.ocsp.exts =
+            d2i_X509_EXTENSIONS(NULL, &ext_data, (int)PACKET_remaining(&exts));
+        if (s->ext.ocsp.exts == NULL || ext_data != PACKET_end(&exts)) {
+            SSLfatal(s, SSL_AD_DECODE_ERROR,
+                     SSL_F_TLS_PARSE_OCSP_STATUS_REQ, SSL_R_BAD_EXTENSION);
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 int tls_parse_ctos_status_request(SSL *s, PACKET *pkt, unsigned int context,
                                   X509 *x, size_t chainidx)
 {
@@ -360,86 +448,73 @@ int tls_parse_ctos_status_request(SSL *s, PACKET *pkt, unsigned int context,
         return 1;
     }
 
-    if (!PACKET_get_length_prefixed_2 (pkt, &responder_id_list)) {
-        SSLfatal(s, SSL_AD_DECODE_ERROR,
-                 SSL_F_TLS_PARSE_CTOS_STATUS_REQUEST, SSL_R_BAD_EXTENSION);
+    if (!parse_ocsp_status_req(s, pkt)) {
+        /* SSLfatal already called */
         return 0;
     }
 
-    /*
-     * We remove any OCSP_RESPIDs from a previous handshake
-     * to prevent unbounded memory growth - CVE-2016-6304
-     */
-    sk_OCSP_RESPID_pop_free(s->ext.ocsp.ids, OCSP_RESPID_free);
-    if (PACKET_remaining(&responder_id_list) > 0) {
-        s->ext.ocsp.ids = sk_OCSP_RESPID_new_null();
-        if (s->ext.ocsp.ids == NULL) {
-            SSLfatal(s, SSL_AD_INTERNAL_ERROR,
-                     SSL_F_TLS_PARSE_CTOS_STATUS_REQUEST, ERR_R_MALLOC_FAILURE);
-            return 0;
-        }
-    } else {
-        s->ext.ocsp.ids = NULL;
-    }
+    return 1;
+}
 
-    while (PACKET_remaining(&responder_id_list) > 0) {
-        OCSP_RESPID *id;
-        PACKET responder_id;
-        const unsigned char *id_data;
+int tls_parse_ctos_status_request_v2(SSL *s, PACKET *pkt, unsigned int context,
+                                  X509 *x, size_t chainidx)
+{
+    PACKET item_list, responder_id_list, exts;
 
-        if (!PACKET_get_length_prefixed_2(&responder_id_list, &responder_id)
-                || PACKET_remaining(&responder_id) == 0) {
-            SSLfatal(s, SSL_AD_DECODE_ERROR,
-                     SSL_F_TLS_PARSE_CTOS_STATUS_REQUEST, SSL_R_BAD_EXTENSION);
-            return 0;
-        }
+    /* We ignore this in a resumption handshake */
+    if (s->hit)
+        return 1;
 
-        id_data = PACKET_data(&responder_id);
-        /* TODO(size_t): Convert d2i_* to size_t */
-        id = d2i_OCSP_RESPID(NULL, &id_data,
-                             (int)PACKET_remaining(&responder_id));
-        if (id == NULL) {
-            SSLfatal(s, SSL_AD_DECODE_ERROR,
-                     SSL_F_TLS_PARSE_CTOS_STATUS_REQUEST, SSL_R_BAD_EXTENSION);
-            return 0;
-        }
+    /* Not defined if we get one of these in a client Certificate */
+    if (x != NULL)
+        return 1;
 
-        if (id_data != PACKET_end(&responder_id)) {
-            OCSP_RESPID_free(id);
-            SSLfatal(s, SSL_AD_DECODE_ERROR,
-                     SSL_F_TLS_PARSE_CTOS_STATUS_REQUEST, SSL_R_BAD_EXTENSION);
-
-            return 0;
-        }
-
-        if (!sk_OCSP_RESPID_push(s->ext.ocsp.ids, id)) {
-            OCSP_RESPID_free(id);
-            SSLfatal(s, SSL_AD_INTERNAL_ERROR,
-                     SSL_F_TLS_PARSE_CTOS_STATUS_REQUEST, ERR_R_INTERNAL_ERROR);
-
-            return 0;
-        }
-    }
-
-    /* Read in request_extensions */
-    if (!PACKET_as_length_prefixed_2(pkt, &exts)) {
+    if (!PACKET_get_length_prefixed_2(pkt, &item_list)) {
         SSLfatal(s, SSL_AD_DECODE_ERROR,
-                 SSL_F_TLS_PARSE_CTOS_STATUS_REQUEST, SSL_R_BAD_EXTENSION);
+                 SSL_F_TLS_PARSE_CTOS_STATUS_REQUEST_V2, SSL_R_BAD_EXTENSION);
         return 0;
     }
 
-    if (PACKET_remaining(&exts) > 0) {
-        const unsigned char *ext_data = PACKET_data(&exts);
-
-        sk_X509_EXTENSION_pop_free(s->ext.ocsp.exts,
-                                   X509_EXTENSION_free);
-        s->ext.ocsp.exts =
-            d2i_X509_EXTENSIONS(NULL, &ext_data, (int)PACKET_remaining(&exts));
-        if (s->ext.ocsp.exts == NULL || ext_data != PACKET_end(&exts)) {
+    /* Search for a supported status_type */
+    int status_type=TLSEXT_STATUSTYPE_nothing;
+    while (PACKET_remaining(&item_list) > 0
+            && status_type != TLSEXT_STATUSTYPE_ocsp
+            && status_type != TLSEXT_STATUSTYPE_ocsp_multi) {
+        if (!PACKET_get_1(pkt, (unsigned int*)&status_type)) {
             SSLfatal(s, SSL_AD_DECODE_ERROR,
-                     SSL_F_TLS_PARSE_CTOS_STATUS_REQUEST, SSL_R_BAD_EXTENSION);
+                    SSL_F_TLS_PARSE_CTOS_STATUS_REQUEST_V2, SSL_R_BAD_EXTENSION);
             return 0;
         }
+        if (status_type != TLSEXT_STATUSTYPE_ocsp
+                && status_type != TLSEXT_STATUSTYPE_ocsp_multi) {
+            size_t len;
+            if (!PACKET_get_net_2_len(&item_list, &len)
+                    || !PACKET_forward(&item_list, len)) {
+                SSLfatal(s, SSL_AD_DECODE_ERROR,
+                        SSL_F_TLS_PARSE_CTOS_STATUS_REQUEST_V2, SSL_R_BAD_EXTENSION);
+                return 0;
+            }
+        }
+    }
+
+    if (PACKET_remaining(&item_list) == 0) {
+        /* No supported status type, ignore it */
+        s->ext.status_type = TLSEXT_STATUSTYPE_nothing;
+        return 1;
+    }
+
+    s->ext.status_type=status_type;
+
+    /* Forward 2 bytes to get to the responder ID list */
+    if (!PACKET_forward(&item_list, 2)) {
+        SSLfatal(s, SSL_AD_DECODE_ERROR,
+                 SSL_F_TLS_PARSE_CTOS_STATUS_REQUEST_V2, SSL_R_BAD_EXTENSION);
+        return 0;
+    }
+    
+    if (!parse_ocsp_status_req(s, &item_list)) {
+        /* SSLfatal already called */
+        return 0;
     }
 
     return 1;

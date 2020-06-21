@@ -729,6 +729,7 @@ typedef enum tlsext_index_en {
     TLSEXT_IDX_supported_groups,
     TLSEXT_IDX_session_ticket,
     TLSEXT_IDX_status_request,
+    TLSEXT_IDX_status_request_v2,
     TLSEXT_IDX_next_proto_neg,
     TLSEXT_IDX_application_layer_protocol_negotiation,
     TLSEXT_IDX_use_srtp,
@@ -1521,6 +1522,8 @@ struct ssl_st {
         /* certificate status request info */
         /* Status type or -1 if no status type */
         int status_type;
+        /* version of certificate status 2 is for RFC 6961 */
+        int status_version;
         /* Raw extension data, if seen */
         unsigned char *scts;
         /* Length of raw extension data, if seen */

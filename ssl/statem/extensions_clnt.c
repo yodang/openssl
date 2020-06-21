@@ -330,6 +330,59 @@ EXT_RETURN tls_construct_ctos_sig_algs(SSL *s, WPACKET *pkt,
 }
 
 #ifndef OPENSSL_NO_OCSP
+
+int write_ocsp_status_req(SSL *s, WPACKET *pkt)
+{
+    int i;
+    for (i = 0; i < sk_OCSP_RESPID_num(s->ext.ocsp.ids); i++) {
+        unsigned char *idbytes;
+        OCSP_RESPID *id = sk_OCSP_RESPID_value(s->ext.ocsp.ids, i);
+        int idlen = i2d_OCSP_RESPID(id, NULL);
+
+        if (idlen <= 0
+                   /* Sub-packet for an individual id */
+                || !WPACKET_sub_allocate_bytes_u16(pkt, idlen, &idbytes)
+                || i2d_OCSP_RESPID(id, &idbytes) != idlen) {
+            SSLfatal(s, SSL_AD_INTERNAL_ERROR,
+                     SSL_F_WRITE_OCSP_STATUS_REQ,
+                     ERR_R_INTERNAL_ERROR);
+            return 0;
+        }
+    }
+    if (!WPACKET_close(pkt)
+            || !WPACKET_start_sub_packet_u16(pkt)) {
+        SSLfatal(s, SSL_AD_INTERNAL_ERROR,
+                 SSL_F_WRITE_OCSP_STATUS_REQ, ERR_R_INTERNAL_ERROR);
+        return 0;
+    }
+    if (s->ext.ocsp.exts) {
+        unsigned char *extbytes;
+        int extlen = i2d_X509_EXTENSIONS(s->ext.ocsp.exts, NULL);
+
+        if (extlen < 0) {
+            SSLfatal(s, SSL_AD_INTERNAL_ERROR,
+                     SSL_F_WRITE_OCSP_STATUS_REQ,
+                     ERR_R_INTERNAL_ERROR);
+            return 0;
+        }
+        if (!WPACKET_allocate_bytes(pkt, extlen, &extbytes)
+                || i2d_X509_EXTENSIONS(s->ext.ocsp.exts, &extbytes)
+                   != extlen) {
+            SSLfatal(s, SSL_AD_INTERNAL_ERROR,
+                     SSL_F_WRITE_OCSP_STATUS_REQ,
+                     ERR_R_INTERNAL_ERROR);
+            return 0;
+       }
+    }
+    if (!WPACKET_close(pkt)) {
+        SSLfatal(s, SSL_AD_INTERNAL_ERROR,
+                 SSL_F_WRITE_OCSP_STATUS_REQ, ERR_R_INTERNAL_ERROR);
+        return 0;
+    }
+    
+    return 1;
+}
+
 EXT_RETURN tls_construct_ctos_status_request(SSL *s, WPACKET *pkt,
                                              unsigned int context, X509 *x,
                                              size_t chainidx)
@@ -340,7 +393,7 @@ EXT_RETURN tls_construct_ctos_status_request(SSL *s, WPACKET *pkt,
     if (x != NULL)
         return EXT_RETURN_NOT_SENT;
 
-    if (s->ext.status_type != TLSEXT_STATUSTYPE_ocsp)
+    if (s->ext.status_version!=1 || s->ext.status_type != TLSEXT_STATUSTYPE_ocsp)
         return EXT_RETURN_NOT_SENT;
 
     if (!WPACKET_put_bytes_u16(pkt, TLSEXT_TYPE_status_request)
@@ -353,52 +406,57 @@ EXT_RETURN tls_construct_ctos_status_request(SSL *s, WPACKET *pkt,
                  SSL_F_TLS_CONSTRUCT_CTOS_STATUS_REQUEST, ERR_R_INTERNAL_ERROR);
         return EXT_RETURN_FAIL;
     }
-    for (i = 0; i < sk_OCSP_RESPID_num(s->ext.ocsp.ids); i++) {
-        unsigned char *idbytes;
-        OCSP_RESPID *id = sk_OCSP_RESPID_value(s->ext.ocsp.ids, i);
-        int idlen = i2d_OCSP_RESPID(id, NULL);
-
-        if (idlen <= 0
-                   /* Sub-packet for an individual id */
-                || !WPACKET_sub_allocate_bytes_u16(pkt, idlen, &idbytes)
-                || i2d_OCSP_RESPID(id, &idbytes) != idlen) {
-            SSLfatal(s, SSL_AD_INTERNAL_ERROR,
-                     SSL_F_TLS_CONSTRUCT_CTOS_STATUS_REQUEST,
-                     ERR_R_INTERNAL_ERROR);
-            return EXT_RETURN_FAIL;
-        }
+    if(!write_ocsp_status_req(s, pkt)) {
+        /* SSLfatal already called */
+        return EXT_RETURN_FAIL;
     }
-    if (!WPACKET_close(pkt)
+    if(!WPACKET_close(pkt)
+            || !WPACKET_close(pkt)) {
+        SSLfatal(s, SSL_AD_INTERNAL_ERROR,
+                 SSL_F_TLS_CONSTRUCT_CTOS_STATUS_REQUEST, ERR_R_INTERNAL_ERROR);
+        return EXT_RETURN_FAIL;
+    }
+    return EXT_RETURN_SENT;
+}
+
+EXT_RETURN tls_construct_ctos_status_request_v2(SSL *s, WPACKET *pkt,
+                                             unsigned int context, X509 *x,
+                                             size_t chainidx)
+{
+    int i;
+
+    /* This extension isn't defined for client Certificates */
+    if (x != NULL)
+        return EXT_RETURN_NOT_SENT;
+
+    if (s->ext.status_version!=2
+            || (s->ext.status_type != TLSEXT_STATUSTYPE_ocsp && s->ext.status_type != TLSEXT_STATUSTYPE_ocsp_multi))
+        return EXT_RETURN_NOT_SENT;
+
+    if (!WPACKET_put_bytes_u16(pkt, TLSEXT_TYPE_status_request_v2)
+               /* Sub-packet for status request v2 extension */
+            || !WPACKET_start_sub_packet_u16(pkt)
+               /* Sub-packet for status request item list */
+            || !WPACKET_start_sub_packet_u16(pkt)
+            || !WPACKET_put_bytes_u8(pkt, s->ext.status_type)
+               /* Sub-packet for the ids */
             || !WPACKET_start_sub_packet_u16(pkt)) {
         SSLfatal(s, SSL_AD_INTERNAL_ERROR,
-                 SSL_F_TLS_CONSTRUCT_CTOS_STATUS_REQUEST, ERR_R_INTERNAL_ERROR);
+                 SSL_F_TLS_CONSTRUCT_CTOS_STATUS_REQUEST_V2, ERR_R_INTERNAL_ERROR);
         return EXT_RETURN_FAIL;
     }
-    if (s->ext.ocsp.exts) {
-        unsigned char *extbytes;
-        int extlen = i2d_X509_EXTENSIONS(s->ext.ocsp.exts, NULL);
-
-        if (extlen < 0) {
-            SSLfatal(s, SSL_AD_INTERNAL_ERROR,
-                     SSL_F_TLS_CONSTRUCT_CTOS_STATUS_REQUEST,
-                     ERR_R_INTERNAL_ERROR);
-            return EXT_RETURN_FAIL;
-        }
-        if (!WPACKET_allocate_bytes(pkt, extlen, &extbytes)
-                || i2d_X509_EXTENSIONS(s->ext.ocsp.exts, &extbytes)
-                   != extlen) {
-            SSLfatal(s, SSL_AD_INTERNAL_ERROR,
-                     SSL_F_TLS_CONSTRUCT_CTOS_STATUS_REQUEST,
-                     ERR_R_INTERNAL_ERROR);
-            return EXT_RETURN_FAIL;
-       }
+    if(!write_ocsp_status_req(s, pkt)) {
+        /* SSLfatal already called */
+        return EXT_RETURN_FAIL;
     }
-    if (!WPACKET_close(pkt) || !WPACKET_close(pkt)) {
+    if(!WPACKET_close(pkt)
+            || !WPACKET_close(pkt)
+            || !WPACKET_close(pkt)) {
         SSLfatal(s, SSL_AD_INTERNAL_ERROR,
-                 SSL_F_TLS_CONSTRUCT_CTOS_STATUS_REQUEST, ERR_R_INTERNAL_ERROR);
+                 SSL_F_TLS_CONSTRUCT_CTOS_STATUS_REQUEST_V2, ERR_R_INTERNAL_ERROR);
         return EXT_RETURN_FAIL;
     }
-
+    
     return EXT_RETURN_SENT;
 }
 #endif
@@ -1521,6 +1579,34 @@ int tls_parse_stoc_status_request(SSL *s, PACKET *pkt, unsigned int context,
     /* Set flag to expect CertificateStatus message */
     s->ext.status_expected = 1;
 
+    return 1;
+}
+
+int tls_parse_stoc_status_request_v2(SSL *s, PACKET *pkt, unsigned int context,
+                                  X509 *x, size_t chainidx)
+{
+    /*
+     * MUST only be sent if we've requested a status
+     * request version 2 message. It must also be empty.
+     */
+    if (s->ext.status_version != 2
+            || (s->ext.status_type != TLSEXT_STATUSTYPE_ocsp
+                & s->ext.status_type != TLSEXT_STATUSTYPE_ocsp_multi)) {
+        SSLfatal(s, SSL_AD_UNSUPPORTED_EXTENSION,
+                 SSL_F_TLS_PARSE_STOC_STATUS_REQUEST_V2, SSL_R_BAD_EXTENSION);
+        return 0;
+    }
+
+    /* The server must send an empty extension */
+    if(PACKET_remaining(pkt) > 0) {
+        SSLfatal(s, SSL_AD_UNSUPPORTED_EXTENSION,
+                 SSL_F_TLS_PARSE_STOC_STATUS_REQUEST_V2, SSL_R_BAD_EXTENSION);
+        return 0;
+    }
+
+    /* Set flag to expect CertificateStatus message */
+    s->ext.status_expected = 1;
+    
     return 1;
 }
 #endif
