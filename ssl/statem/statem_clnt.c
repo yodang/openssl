@@ -2842,7 +2842,7 @@ int tls_process_cert_status_v2_body(SSL *s, PACKET *pkt)
     }
     s->ext.ocsp.resp_len = resplen;
     /* Forward to the end of the message */
-    if (PACKET_remaining(pkt) == 0) {
+    if (PACKET_remaining(pkt) != 0) {
         if(!PACKET_forward(pkt, PACKET_remaining(pkt))) {
             SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_TLS_PROCESS_CERT_STATUS_V2_BODY,
                 ERR_R_INTERNAL_ERROR);
