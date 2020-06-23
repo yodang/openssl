@@ -1632,6 +1632,32 @@ EXT_RETURN tls_construct_stoc_status_request(SSL *s, WPACKET *pkt,
 
     return EXT_RETURN_SENT;
 }
+
+EXT_RETURN tls_construct_stoc_status_request_v2(SSL *s, WPACKET *pkt,
+                                             unsigned int context, X509 *x,
+                                             size_t chainidx)
+{
+    if (!s->ext.status_expected)
+        return EXT_RETURN_NOT_SENT;
+
+    if (SSL_IS_TLS13(s))
+        return EXT_RETURN_NOT_SENT;
+
+    if (!WPACKET_put_bytes_u16(pkt, TLSEXT_TYPE_status_request_v2)
+            || !WPACKET_start_sub_packet_u16(pkt)) {
+        SSLfatal(s, SSL_AD_INTERNAL_ERROR,
+                 SSL_F_TLS_CONSTRUCT_STOC_STATUS_REQUEST, ERR_R_INTERNAL_ERROR);
+        return EXT_RETURN_FAIL;
+    }
+
+    if (!WPACKET_close(pkt)) {
+        SSLfatal(s, SSL_AD_INTERNAL_ERROR,
+                 SSL_F_TLS_CONSTRUCT_STOC_STATUS_REQUEST, ERR_R_INTERNAL_ERROR);
+        return EXT_RETURN_FAIL;
+    }
+
+    return EXT_RETURN_SENT;
+}
 #endif
 
 #ifndef OPENSSL_NO_NEXTPROTONEG
